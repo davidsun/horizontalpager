@@ -71,21 +71,18 @@ public final class HorizontalPager extends ViewGroup {
     // Argument to getVelocity for units to give pixels per second (1 = pixels per millisecond).
     private static final int VELOCITY_UNIT_PIXELS_PER_SECOND = 1000;
 
-    private static final int TOUCH_STATE_REST = 0;
-    private static final int TOUCH_STATE_HORIZONTAL_SCROLLING = 1;
-    private static final int TOUCH_STATE_VERTICAL_SCROLLING = -1;
     private int mCurrentScreen;
     private int mDensityAdjustedSnapVelocity;
     private boolean mFirstLayout = true;
     private float mLastMotionX;
     private float mLastMotionY;
-    private OnScreenSwitchListener mOnScreenSwitchListener;
     private int mMaximumVelocity;
     private int mNextScreen = INVALID_SCREEN;
     private Scroller mScroller;
     private int mTouchSlop;
-    private int mTouchState = TOUCH_STATE_REST;
+    private boolean isDragging;
     private VelocityTracker mVelocityTracker;
+    private OnScreenSwitchListener mOnScreenSwitchListener;
     private int mLastSeenLayoutWidth = -1;
 
     /**
@@ -202,177 +199,114 @@ public final class HorizontalPager extends ViewGroup {
     }
 
     @Override
-    public boolean onInterceptTouchEvent(final MotionEvent ev) {
+    public boolean onInterceptTouchEvent(final MotionEvent event) {
         /*
-         * By Yoni Samlan: Modified onInterceptTouchEvent based on standard ScrollView's
-         * onIntercept. The logic is designed to support a nested vertically scrolling view inside
-         * this one; once a scroll registers for X-wise scrolling, handle it in this view and don't
-         * let the children, but once a scroll registers for y-wise scrolling, let the children
-         * handle it exclusively.
+         * Modified by davidsun, no need to consider vertical movements 
          */
-        final int action = ev.getAction();
-        boolean intercept = false;
+        final int action = event.getAction();
+        final float x = event.getX();
+        final float y = event.getY();
 
         switch (action) {
-            case MotionEvent.ACTION_MOVE:
-                /*
-                 * If we're in a horizontal scroll event, take it (intercept further events). But if
-                 * we're mid-vertical-scroll, don't even try; let the children deal with it. If we
-                 * haven't found a scroll event yet, check for one.
-                 */
-                if (mTouchState == TOUCH_STATE_HORIZONTAL_SCROLLING) {
-                    /*
-                     * We've already started a horizontal scroll; set intercept to true so we can
-                     * take the remainder of all touch events in onTouchEvent.
-                     */
-                    intercept = true;
-                } else if (mTouchState == TOUCH_STATE_VERTICAL_SCROLLING) {
-                    // Let children handle the events for the duration of the scroll event.
-                    intercept = false;
-                } else { // We haven't picked up a scroll event yet; check for one.
+        case MotionEvent.ACTION_MOVE:
+            if (!isDragging) {
+                final int xDiff = (int) Math.abs(x - mLastMotionX);
+                final int yDiff = (int) Math.abs(y - mLastMotionY);
 
-                    /*
-                     * If we detected a horizontal scroll event, start stealing touch events (mark
-                     * as scrolling). Otherwise, see if we had a vertical scroll event -- if so, let
-                     * the children handle it and don't look to intercept again until the motion is
-                     * done.
-                     */
-
-                    final float x = ev.getX();
-                    final int xDiff = (int) Math.abs(x - mLastMotionX);
-                    boolean xMoved = xDiff > mTouchSlop;
-
-                    if (xMoved) {
-                        // Scroll if the user moved far enough along the X axis
-                        mTouchState = TOUCH_STATE_HORIZONTAL_SCROLLING;
-                        mLastMotionX = x;
-                    }
-
-                    final float y = ev.getY();
-                    final int yDiff = (int) Math.abs(y - mLastMotionY);
-                    boolean yMoved = yDiff > mTouchSlop;
-
-                    if (yMoved) {
-                        mTouchState = TOUCH_STATE_VERTICAL_SCROLLING;
-                    }
+                if (xDiff > mTouchSlop && yDiff > mTouchSlop) {
+                    isDragging = (xDiff >= yDiff);
+                } else if (xDiff > mTouchSlop) {
+                    isDragging = true;
+                } else if (yDiff > mTouchSlop) {
+                    isDragging = false;
                 }
-
-                break;
-            case MotionEvent.ACTION_CANCEL:
-            case MotionEvent.ACTION_UP:
-                // Release the drag.
-                mTouchState = TOUCH_STATE_REST;
-                break;
-            case MotionEvent.ACTION_DOWN:
-                /*
-                 * No motion yet, but register the coordinates so we can check for intercept at the
-                 * next MOVE event.
-                 */
-                mLastMotionY = ev.getY();
-                mLastMotionX = ev.getX();
-                break;
-            default:
-                break;
             }
-
-        return intercept;
+            break;
+        case MotionEvent.ACTION_CANCEL:
+        case MotionEvent.ACTION_UP:
+            isDragging = false;
+            break;
+        default:
+            break;
+        }
+        mLastMotionX = x;
+        mLastMotionY = y;
+        return isDragging;
     }
 
     @Override
-    public boolean onTouchEvent(final MotionEvent ev) {
-
+    public boolean onTouchEvent(final MotionEvent event) {
+        /*
+         * Modified by davidsun, no need to consider vertical movements 
+         */
         if (mVelocityTracker == null) {
             mVelocityTracker = VelocityTracker.obtain();
         }
-        mVelocityTracker.addMovement(ev);
 
-        final int action = ev.getAction();
-        final float x = ev.getX();
+        mVelocityTracker.addMovement(event);
+
+        final int action = event.getAction();
+        final float x = event.getX();
+        final float y = event.getY();
 
         switch (action) {
-            case MotionEvent.ACTION_DOWN:
-                /*
-                 * If being flinged and user touches, stop the fling. isFinished will be false if
-                 * being flinged.
-                 */
-                if (!mScroller.isFinished()) {
-                    mScroller.abortAnimation();
+        case MotionEvent.ACTION_DOWN:
+            if (!mScroller.isFinished()) {
+                mScroller.abortAnimation();
+            }
+            isDragging = true;
+            break;
+        case MotionEvent.ACTION_MOVE:
+            final int xDiff = (int) Math.abs(x - mLastMotionX);
+            if (xDiff > mTouchSlop) {
+                isDragging = true;
+            }
+
+            if (isDragging) {
+                final int deltaX = (int) (mLastMotionX - x);
+                final int scrollX = getScrollX();
+
+                if (deltaX < 0) {
+                    if (scrollX > 0) {
+                        scrollBy(Math.max(-scrollX, deltaX), 0);
+                    }
+                } else if (deltaX > 0) {
+                    final int availableToScroll = getChildAt(getChildCount() - 1).getRight() - scrollX - getWidth();
+                    if (availableToScroll > 0) {
+                        scrollBy(Math.min(availableToScroll, deltaX), 0);
+                    }
                 }
+            }
+            break;
+        case MotionEvent.ACTION_UP:
+            if (isDragging) {
+                final VelocityTracker velocityTracker = mVelocityTracker;
+                velocityTracker.computeCurrentVelocity(VELOCITY_UNIT_PIXELS_PER_SECOND, mMaximumVelocity);
+                final int velocityX = (int) velocityTracker.getXVelocity();
 
-                // Remember where the motion event started
-                mLastMotionX = x;
-
-                if (mScroller.isFinished()) {
-                    mTouchState = TOUCH_STATE_REST;
+                if (velocityX > mDensityAdjustedSnapVelocity && mCurrentScreen > 0) {
+                    snapToScreen(mCurrentScreen - 1);
+                } else if (velocityX < -mDensityAdjustedSnapVelocity && mCurrentScreen < getChildCount() - 1) {
+                    snapToScreen(mCurrentScreen + 1);
                 } else {
-                    mTouchState = TOUCH_STATE_HORIZONTAL_SCROLLING;
+                    snapToDestination();
                 }
 
-                break;
-            case MotionEvent.ACTION_MOVE:
-                final int xDiff = (int) Math.abs(x - mLastMotionX);
-                boolean xMoved = xDiff > mTouchSlop;
-
-                if (xMoved) {
-                    // Scroll if the user moved far enough along the X axis
-                    mTouchState = TOUCH_STATE_HORIZONTAL_SCROLLING;
+                if (mVelocityTracker != null) {
+                    mVelocityTracker.recycle();
+                    mVelocityTracker = null;
                 }
-
-                if (mTouchState == TOUCH_STATE_HORIZONTAL_SCROLLING) {
-                    // Scroll to follow the motion event
-                    final int deltaX = (int) (mLastMotionX - x);
-                    mLastMotionX = x;
-                    final int scrollX = getScrollX();
-
-                    if (deltaX < 0) {
-                        if (scrollX > 0) {
-                            scrollBy(Math.max(-scrollX, deltaX), 0);
-                        }
-                    } else if (deltaX > 0) {
-                        final int availableToScroll =
-                                getChildAt(getChildCount() - 1).getRight() - scrollX - getWidth();
-
-                        if (availableToScroll > 0) {
-                            scrollBy(Math.min(availableToScroll, deltaX), 0);
-                        }
-                    }
-                }
-
-                break;
-
-            case MotionEvent.ACTION_UP:
-                if (mTouchState == TOUCH_STATE_HORIZONTAL_SCROLLING) {
-                    final VelocityTracker velocityTracker = mVelocityTracker;
-                    velocityTracker.computeCurrentVelocity(VELOCITY_UNIT_PIXELS_PER_SECOND,
-                            mMaximumVelocity);
-                    int velocityX = (int) velocityTracker.getXVelocity();
-
-                    if (velocityX > mDensityAdjustedSnapVelocity && mCurrentScreen > 0) {
-                        // Fling hard enough to move left
-                        snapToScreen(mCurrentScreen - 1);
-                    } else if (velocityX < -mDensityAdjustedSnapVelocity
-                            && mCurrentScreen < getChildCount() - 1) {
-                        // Fling hard enough to move right
-                        snapToScreen(mCurrentScreen + 1);
-                    } else {
-                        snapToDestination();
-                    }
-
-                    if (mVelocityTracker != null) {
-                        mVelocityTracker.recycle();
-                        mVelocityTracker = null;
-                    }
-                }
-
-                mTouchState = TOUCH_STATE_REST;
-
-                break;
-            case MotionEvent.ACTION_CANCEL:
-                mTouchState = TOUCH_STATE_REST;
-                break;
-            default:
-                break;
+            }
+            isDragging = false;
+            break;
+        case MotionEvent.ACTION_CANCEL:
+            isDragging = false;
+            break;
+        default:
+            break;
         }
+        mLastMotionX = x;
+        mLastMotionY = y;
 
         return true;
     }
